@@ -1,52 +1,81 @@
 #include <Arduino.h>
 #include <IRremote.hpp>
+#include "frames.h"
 
-#define IR_RECEIVE_PIN 3
+#define TRIGGER_HOT_PIN 8
 
+#define IR_SEND_PIN 47
+#define IR_SEND_DUTY_CYCLE_PERCENT 33
+#define IR_FREQUENCY 38
+
+#define DEBOUNCE_DELAY 50
+
+size_t onFrameSize;
+size_t offFrameSize;
+
+int on_sent = 0;
+int off_sent = 0;
+int send_count = 10;
+
+unsigned long lastDebounceTime = 0;
+int lastButtonState = LOW;
+
+void sendOn() {
+  Serial.println(F("Sending ON"));
+  for(int i = 0; i < send_count; i++) {
+    IrSender.sendRaw(FRAME_ON_MEDIUM, onFrameSize, IR_FREQUENCY);
+    delay(200);
+  }
+  Serial.println(F("Sending ON [OK]"));
+  off_sent = 0;
+  on_sent = 1;
+  delay(2000);
+}
+
+void sendOff() {
+  Serial.println(F("Sending OFF"));
+  for(int i = 0; i < send_count; i++) {
+    IrSender.sendRaw(FRAME_OFF, offFrameSize, IR_FREQUENCY);
+    delay(200);
+  }
+  Serial.println(F("Sending OFF [OK]"));
+  off_sent = 1;
+  on_sent = 0;
+  delay(2000);
+}
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
 
-  IrReceiver.begin(IR_RECEIVE_PIN, DISABLE_LED_FEEDBACK);
+  pinMode(TRIGGER_HOT_PIN, INPUT);
+  IrSender.begin(IR_SEND_PIN, true, LED_BUILTIN);
 
-  Serial.println("Ready to receive IR signals");
-  Serial.println("Point the remote controller to the IR receiver and press!");
+  on_sent = 0;
+  off_sent = 0;
+  
+  onFrameSize = sizeof(FRAME_ON_MEDIUM) / sizeof(uint16_t);
+  offFrameSize = sizeof(FRAME_OFF) / sizeof(uint16_t);
 }
 
 void loop() {
-  if (IrReceiver.decode()) {  // Grab an IR code
-        // At 115200 baud, printing takes 200 ms for NEC protocol and 70 ms for NEC repeat
-        Serial.println(); // blank line between entries
-        Serial.println(); // 2 blank lines between entries
-        IrReceiver.printIRResultShort(&Serial);
-        // Check if the buffer overflowed
-        if (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_WAS_OVERFLOW) {
-            Serial.println("Try to increase the \"RAW_BUFFER_LENGTH\" value");
-            // see also https://github.com/Arduino-IRremote/Arduino-IRremote#compile-options--macros-for-this-library
-        } else {
-            if (IrReceiver.decodedIRData.protocol == UNKNOWN) {
-                Serial.println(F("Received noise or an unknown (or not yet enabled) protocol"));
-            }
-            else {
-              Serial.println();
-              IrReceiver.printIRSendUsage(&Serial);
-              Serial.println();
-              Serial.println(F("Raw result in internal ticks (50 us) - with leading gap"));
-              IrReceiver.printIRResultRawFormatted(&Serial, false); // Output the results in RAW format
-              Serial.println(F("Raw result in microseconds - with leading gap"));
-              IrReceiver.printIRResultRawFormatted(&Serial, true);  // Output the results in RAW format
-              Serial.println();                               // blank line between entries
-              Serial.print(F("Result as internal 8bit ticks (50 us) array - compensated with MARK_EXCESS_MICROS="));
-              Serial.println(MARK_EXCESS_MICROS);
-              IrReceiver.compensateAndPrintIRResultAsCArray(&Serial, false); // Output the results as uint8_t source code array of ticks
-              Serial.print(F("Result as microseconds array - compensated with MARK_EXCESS_MICROS="));
-              Serial.println(MARK_EXCESS_MICROS);
-              IrReceiver.compensateAndPrintIRResultAsCArray(&Serial, true); // Output the results as uint16_t source code array of micros
-              IrReceiver.printIRResultAsCVariables(&Serial);  // Output address and data as source code variables
+  // Read the current state of the trigger pin
+  int reading = digitalRead(TRIGGER_HOT_PIN);
 
-              IrReceiver.compensateAndPrintIRResultAsPronto(&Serial);
-            }
-        }
-        IrReceiver.resume();                            // Prepare for the next value
+  // Check if the state has changed
+  if (reading != lastButtonState) {
+    lastDebounceTime = millis(); // Reset debounce timer
+  }
+
+  // Only act if enough time has passed since the last change
+  if ((millis() - lastDebounceTime) > DEBOUNCE_DELAY) {
+    if (reading == HIGH && on_sent == 0) {
+      sendOn();
+    } else if (reading == LOW && off_sent == 0) {
+      sendOff();
     }
+  }
+
+  // Save the current state as the last state for the next loop iteration
+  lastButtonState = reading;
 }
+
